@@ -1,14 +1,21 @@
-import uvicorn
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import StreamingResponse, HTMLResponse
+# from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi import Request
 from pydantic import BaseModel
-from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration, TextStreamer
+from transformers import M2M100Tokenizer, M2M100ForConditionalGeneration
+import torch
+import json
 import time
-import asyncio
-from typing import Optional
+import threading
+from transformers import TextIteratorStreamer
 
-app = FastAPI(title="M2M100 Translation API")
+app = FastAPI()
 
-# Load model and tokenizer
+# Mount templates directory
+templates = Jinja2Templates(directory="templates")
+
 model_name = "facebook/m2m100_418M"
 tokenizer = M2M100Tokenizer.from_pretrained(model_name)
 model = M2M100ForConditionalGeneration.from_pretrained(model_name)
@@ -18,64 +25,96 @@ class TranslationRequest(BaseModel):
     source_language: str
     target_language: str
 
-class CustomStreamer(TextStreamer):
-    def __init__(self, tokenizer, skip_special_tokens: bool = True):
-        super().__init__(tokenizer, skip_special_tokens)
-        self.current_text = ""
-    
-    def put(self, value):
-        if isinstance(value, str):
-            self.current_text += value
-        else:
-            # Decode tensor values before concatenating
-            decoded_text = self.tokenizer.decode(value, skip_special_tokens=True)
-            self.current_text += decoded_text
-        return value
-
-async def translate_stream(text: str, src_lang: str, tgt_lang: str):
+def translate_text(text: str, src_lang: str, tgt_lang: str) -> str:
     try:
         tokenizer.src_lang = src_lang
         encoded = tokenizer(text, return_tensors="pt")
         
-        # Create a custom streamer
-        streamer = CustomStreamer(tokenizer, skip_special_tokens=True)
-        
-        # Generate with streaming
-        generated = model.generate(
+        generated_tokens = model.generate(
             **encoded,
             forced_bos_token_id=tokenizer.get_lang_id(tgt_lang),
-            streamer=streamer,
-            max_length=512,
-            num_beams=1,
-            return_dict_in_generate=True,
-            output_scores=False
+            max_length=100
         )
         
-        # Return the final translation
-        final_translation = tokenizer.decode(generated.sequences[0], skip_special_tokens=True)
-        return final_translation
-        
+        translation = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
+        return translation
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/translate/stream")
-async def translate_text(request: TranslationRequest):
-    """
-    Translate text from source language to target language.
-    """
+def stream_translation(text: str, src_lang: str, tgt_lang: str):
     try:
-        translation = await translate_stream(
-            request.text,
-            request.source_language,
-            request.target_language
-        )
+        tokenizer.src_lang = src_lang
+        inputs = tokenizer(text, return_tensors="pt").to(model.device)
+
+        streamer = TextIteratorStreamer(tokenizer, skip_special_tokens=True)
+        gen_kwargs = {
+            **inputs,
+            "streamer": streamer,
+            "max_new_tokens": 100,
+            "forced_bos_token_id": tokenizer.get_lang_id(tgt_lang),
+            "num_beams": 1,
+        }
+
+        # Run generation in background
+        thread = threading.Thread(target=model.generate, kwargs=gen_kwargs)
+        thread.start()
+
+        # Stream tokens in real-time
+        for token in streamer:
+            if token.strip():
+                yield token + " "
+                time.sleep(0.05)
+
+    except Exception as e:
+        yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+@app.post("/translate")
+async def translate(request: TranslationRequest):
+    try:
+        translation = translate_text(request.text, request.source_language, request.target_language)
         return {"translation": translation}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/")
-async def root():
-    return {"message": "Welcome to M2M100 Translation API"}
+@app.post("/translate/stream")
+async def translate_stream(request: TranslationRequest):
+    try:
+        generator = stream_translation(request.text, request.source_language, request.target_language)
+        return StreamingResponse(
+            generator,
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+@app.get("/translation_page", response_class=HTMLResponse)
+async def root(request: Request):
+    return templates.TemplateResponse("translation_page.html", {"request": request})
+
+def stream_hardcoded_text():
+    hardcoded_text = "This is a hardcoded string that will be streamed to the user character by character. Hello from the streaming API!"
+    for char in hardcoded_text:
+        # response_data = {"text": char}
+        yield f"{char}"
+        # Add a small delay to make the streaming visible
+        time.sleep(0.1)
+
+@app.get("/stream-text")
+async def stream_text():
+    try:
+        return StreamingResponse(
+            stream_hardcoded_text(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Translation Interface</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        .language-selectors {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        select {
+            padding: 8px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
+            flex: 1;
+        }
+        .text-blocks {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        textarea {
+            width: 100%;
+            height: 200px;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+        }
+        .buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #translateBtn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #streamTranslateBtn {
+            background-color: #2196F3;
+            color: white;
+        }
+        #clearBtn {
+            background-color: #f44336;
+            color: white;
+        }
+        button:hover {
+            opacity: 0.9;
+        }
+        .loading-spinner {
+            display: none;
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .output-container {
+            position: relative;
+        }
+        .timer-display {
+            text-align: center;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 style="text-align: center;">Translation Interface</h1>
+        
+        <div class="language-selectors">
+            <select id="sourceLanguage">
+                <option value="en">English</option>
+                <option value="es">Spanish</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="it">Italian</option>
+                <option value="pt">Portuguese</option>
+                <option value="ru">Russian</option>
+                <option value="zh">Chinese</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="ur">Urdu</option>
+                <option value="ar">Arabic</option>
+            </select>
+            
+            <select id="targetLanguage">
+                <option value="es">Spanish</option>
+                <option value="en">English</option>
+                <option value="fr">French</option>
+                <option value="de">German</option>
+                <option value="it">Italian</option>
+                <option value="pt">Portuguese</option>
+                <option value="ru">Russian</option>
+                <option value="zh">Chinese</option>
+                <option value="ja">Japanese</option>
+                <option value="ko">Korean</option>
+                <option value="ur">Urdu</option>
+                <option value="ar">Arabic</option>
+            </select>
+        </div>
+
+        <div class="text-blocks">
+            <div style="flex: 1;">
+                <h3>Input Text</h3>
+                <textarea id="inputText" placeholder="Enter text to translate..."></textarea>
+            </div>
+            &nbsp;
+            <div style="flex: 1;">
+                <h3>Translated Text</h3>
+                <div class="output-container">
+                    <textarea id="outputText" readonly placeholder="Translation will appear here..."></textarea>
+                    <div id="loadingSpinner" class="loading-spinner"></div>
+                </div>
+                <div id="timerDisplay" class="timer-display"></div>
+            </div>
+            &nbsp;
+        </div>
+
+        <div class="buttons">
+            <button id="translateBtn" onclick="translateText()">Translate</button>
+            <button id="streamTranslateBtn" onclick="streamTranslateText()">Stream Translate</button>
+            <button id="clearBtn" onclick="clearText()">Clear</button>
+        </div>
+    </div>
+
+    <script>
+        let startTime;
+        
+        function formatTime(milliseconds) {
+            // Convert to integer to avoid decimal places
+            const totalMs = Math.floor(milliseconds);
+            
+            const minutes = Math.floor(totalMs / 60000);
+            const seconds = Math.floor((totalMs % 60000) / 1000);
+            const ms = totalMs % 1000;
+            
+            const formattedMinutes = minutes.toString().padStart(2, '0');
+            const formattedSeconds = seconds.toString().padStart(2, '0');
+            const formattedMs = ms.toString().padStart(3, '0');
+            
+            return `${formattedMinutes}:${formattedSeconds}:${formattedMs}`;
+        }
+        
+        async function translateText() {
+            const inputText = document.getElementById('inputText').value;
+            const sourceLang = document.getElementById('sourceLanguage').value;
+            const targetLang = document.getElementById('targetLanguage').value;
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const outputText = document.getElementById('outputText');
+            const timerDisplay = document.getElementById('timerDisplay');
+            
+            if (!inputText) {
+                alert('Please enter text to translate');
+                return;
+            }
+
+            try {
+                loadingSpinner.style.display = 'block';
+                outputText.value = '';
+                timerDisplay.textContent = '';
+                startTime = performance.now();
+                
+                const response = await fetch('/translate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: inputText,
+                        source_language: sourceLang,
+                        target_language: targetLang
+                    })
+                });
+
+                const data = await response.json();
+                outputText.value = data.translation;
+                
+                const endTime = performance.now();
+                const executionTime = endTime - startTime;
+                const formattedTime = formatTime(executionTime);
+                timerDisplay.textContent = `Translation completed in ${formattedTime}`;
+            } catch (error) {
+                console.error('Translation error:', error);
+                alert('Error occurred during translation');
+                timerDisplay.textContent = '';
+            } finally {
+                loadingSpinner.style.display = 'none';
+            }
+        }
+
+        async function streamTranslateText() {
+            const inputText = document.getElementById('inputText').value;
+            const sourceLang = document.getElementById('sourceLanguage').value;
+            const targetLang = document.getElementById('targetLanguage').value;
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const outputText = document.getElementById('outputText');
+            const timerDisplay = document.getElementById('timerDisplay');
+
+            if (!inputText) {
+                alert('Please enter text to translate');
+                return;
+            }
+
+            loadingSpinner.style.display = 'block';
+            outputText.value = '';
+            timerDisplay.textContent = '';
+            startTime = performance.now();
+
+            try {
+                const response = await fetch('/translate/stream', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: inputText,
+                        source_language: sourceLang,
+                        target_language: targetLang
+                    })
+                });
+
+                if (!response.body) throw new Error('No response body');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let done = false;
+                let translation = '';
+
+                while (!done) {
+                    const { value, done: doneReading } = await reader.read();
+                    done = doneReading;
+                    if (value) {
+                        const chunk = decoder.decode(value, { stream: true });
+                        translation += chunk;
+                        outputText.value = translation;
+                    }
+                }
+
+                const endTime = performance.now();
+                const executionTime = endTime - startTime;
+                const formattedTime = formatTime(executionTime);
+                timerDisplay.textContent = `Streaming completed in ${formattedTime}`;
+            } catch (error) {
+                console.error('Streaming translation error:', error);
+                alert('Error occurred during streaming translation');
+                timerDisplay.textContent = '';
+            } finally {
+                loadingSpinner.style.display = 'none';
+            }
+        }
+
+        function clearText() {
+            document.getElementById('inputText').value = '';
+            document.getElementById('outputText').value = '';
+            document.getElementById('timerDisplay').textContent = '';
+        }
+    </script>
+</body>
+</html>
