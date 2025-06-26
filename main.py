@@ -43,28 +43,29 @@ def translate_text(text: str, src_lang: str, tgt_lang: str) -> str:
 
 def stream_translation(text: str, src_lang: str, tgt_lang: str):
     try:
-        tokenizer.src_lang = src_lang
-        inputs = tokenizer(text, return_tensors="pt").to(model.device)
+        paragraphs = [p for p in text.split('\n') if p.strip()]
+        for para in paragraphs:
+            tokenizer.src_lang = src_lang
+            inputs = tokenizer(para, return_tensors="pt").to(model.device)
 
-        streamer = TextIteratorStreamer(tokenizer, skip_special_tokens=True)
-        gen_kwargs = {
-            **inputs,
-            "streamer": streamer,
-            "max_new_tokens": 100,
-            "forced_bos_token_id": tokenizer.get_lang_id(tgt_lang),
-            "num_beams": 1,
-        }
+            streamer = TextIteratorStreamer(tokenizer, skip_special_tokens=True)
+            gen_kwargs = {
+                **inputs,
+                "streamer": streamer,
+                "max_new_tokens": 100,
+                "forced_bos_token_id": tokenizer.get_lang_id(tgt_lang),
+                "num_beams": 1,
+            }
 
-        # Run generation in background
-        thread = threading.Thread(target=model.generate, kwargs=gen_kwargs)
-        thread.start()
+            thread = threading.Thread(target=model.generate, kwargs=gen_kwargs)
+            thread.start()
 
-        # Stream tokens in real-time
-        for token in streamer:
-            if token.strip():
-                yield token + " "
-                time.sleep(0.05)
-
+            for token in streamer:
+                if token.strip():
+                    yield token + " "
+                    time.sleep(0.05)
+            # Add a paragraph separator (optional)
+            yield "\n"
     except Exception as e:
         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
